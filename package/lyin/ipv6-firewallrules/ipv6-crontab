@@ -1,0 +1,5 @@
+#!/bin/sh
+
+sed -i '/ipv6-crontab/d' /etc/crontabs/root
+echo "0 */1 * * * /etc/ipv6-firewallrules.sh" >> /etc/crontabs/root
+crontab /etc/crontabs/root

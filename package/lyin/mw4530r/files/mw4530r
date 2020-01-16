@@ -1,0 +1,9 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+start()
+{
+  [ -f /etc/index.htm ] && mv /etc/index.htm /usr/lib/lua/luci/view/admin_status/index.htm
+  [ -f /etc/boot ] && mv /etc/boot /etc/init.d/boot
+}

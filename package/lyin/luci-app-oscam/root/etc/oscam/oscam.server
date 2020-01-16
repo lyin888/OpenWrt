@@ -1,0 +1,17 @@
+[reader]
+label                         = reader0
+protocol                      = cccam
+device                        = sd.dstvb.com,38002
+user                          = hqhpa
+password                      = aewzo
+reconnecttimeout              = 3
+group                         = 1
+blockemm-unknown              = 1
+blockemm-u                    = 1
+blockemm-s                    = 1
+blockemm-g                    = 1
+cccversion                    = 2.2.1
+cccmaxhops                    = 12
+cccreshare                    = 1
+audisabled                    = 1
+
