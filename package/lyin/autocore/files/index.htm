@@ -53,7 +53,7 @@
 			cpuinfo    = cpu_info,
                         ethinfo    = eth_info,
 			uptime     = sysinfo.uptime or 0,
-			localtime  = os.date("%Y年 %m月 %d日 %H:%M分"),
+			localtime  = os.date("%Y-%m-%d") .. " " .. os.date("%X") .. " " .. translate(os.date("%A")),
 			loadavg    = sysinfo.load or { 0, 0, 0 },
 			memory     = meminfo,
 			memcached  = mem_cached,
@@ -632,7 +632,7 @@
 
 			var e;
 
-			if (e = document.getElementById('ethinfo'))			{
+			if (e = document.getElementById('ethinfo')) {
 				var ports = eval('(' + info.ethinfo + ')');
 				var tmp = "";
 				for (var i in ports)
@@ -831,3 +831,4 @@
 <% end %>
 
 <%+footer%>
+
