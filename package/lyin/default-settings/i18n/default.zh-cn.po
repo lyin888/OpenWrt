@@ -144,11 +144,11 @@ msgstr "使用率"
 msgid "File System"
 msgstr "文件系统"
 
-msgid ""
-msgstr ""
+msgid "Plugin"
+msgstr "插件"
 
-msgid ""
-msgstr ""
+msgid "Plugin Opts"
+msgstr "插件选项"
 
 msgid ""
 msgstr ""
