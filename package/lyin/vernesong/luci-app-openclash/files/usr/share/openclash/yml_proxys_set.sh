@@ -10,9 +10,9 @@ PROXY_PROVIDER_FILE="/tmp/yaml_provider.yaml"
 servers_if_update=$(uci get openclash.config.servers_if_update 2>/dev/null)
 config_auto_update=$(uci get openclash.config.auto_update 2>/dev/null)
 CONFIG_FILE=$(uci get openclash.config.config_path 2>/dev/null)
-CONFIG_NAME=$(echo $CONFIG_FILE |awk -F '/' '{print $5}' 2>/dev/null)
+CONFIG_NAME=$(echo "$CONFIG_FILE" |awk -F '/' '{print $5}' 2>/dev/null)
 UPDATE_CONFIG_FILE=$(uci get openclash.config.config_update_path 2>/dev/null)
-UPDATE_CONFIG_NAME=$(echo $UPDATE_CONFIG_FILE |awk -F '/' '{print $5}' 2>/dev/null)
+UPDATE_CONFIG_NAME=$(echo "$UPDATE_CONFIG_FILE" |awk -F '/' '{print $5}' 2>/dev/null)
 
 if [ ! -z "$UPDATE_CONFIG_FILE" ]; then
    CONFIG_FILE="$UPDATE_CONFIG_FILE"
@@ -21,7 +21,7 @@ fi
 
 if [ -z "$CONFIG_FILE" ]; then
 	CONFIG_FILE="/etc/openclash/config/$(ls -lt /etc/openclash/config/ | grep -E '.yaml|.yml' | head -n 1 |awk '{print $9}')"
-	CONFIG_NAME=$(echo $CONFIG_FILE |awk -F '/' '{print $5}' 2>/dev/null)
+	CONFIG_NAME=$(echo "$CONFIG_FILE" |awk -F '/' '{print $5}' 2>/dev/null)
 fi
 
 if [ -z "$CONFIG_NAME" ]; then
@@ -301,7 +301,7 @@ rm -rf /tmp/Proxy_Provider
 config_load "openclash"
 config_foreach yml_proxy_provider_set "proxy-provider"
 sed -i "s/^ \{0,\}/  - /" /tmp/Proxy_Provider 2>/dev/null #添加参数
-if [ "$(grep "-" /tmp/Proxy_Provider |wc -l)" -eq 0 ]; then
+if [ "$(grep "-" /tmp/Proxy_Provider 2>/dev/null |wc -l)" -eq 0 ]; then
    rm -rf $PROXY_PROVIDER_FILE
    rm -rf /tmp/Proxy_Provider
 fi
@@ -665,9 +665,9 @@ echo "" >$START_LOG
 if [ -z "$if_game_proxy" ]; then
    rm -rf $SERVER_FILE 2>/dev/null
    rm -rf $PROXY_PROVIDER_FILE 2>/dev/null
+   rm -rf /tmp/yaml_groups.yaml 2>/dev/null
 fi
 rm -rf /tmp/Proxy_Server 2>/dev/null
-rm -rf /tmp/yaml_groups.yaml 2>/dev/null
 rm -rf /tmp/Proxy_Provider 2>/dev/null
 uci set openclash.config.enable=1 2>/dev/null
 [ "$(uci get openclash.config.servers_if_update)" == "0" ] && [ -z "$if_game_proxy" ] && /etc/init.d/openclash restart >/dev/null 2>&1
