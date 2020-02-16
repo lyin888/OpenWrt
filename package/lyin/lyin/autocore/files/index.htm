@@ -48,8 +48,10 @@
 
 		local cpu_info = luci.sys.exec("cpuinfo")
 		local eth_info = luci.sys.exec("ethinfo")
+		local user_info = tonumber(luci.sys.exec("cat /proc/net/arp | grep '0x2' | wc -l")) or 0
 
 		local rv = {
+			userinfo   = user_info,
 			cpuinfo    = cpu_info,
                         ethinfo    = eth_info,
 			uptime     = sysinfo.uptime or 0,
@@ -655,6 +657,9 @@
 			if (e = document.getElementById('cpuinfo'))
 				e.innerHTML = info.cpuinfo;
 
+			if (e = document.getElementById('userinfo'))
+				e.innerHTML = info.userinfo;
+
 			if (e = document.getElementById('loadavg'))
 				e.innerHTML = String.format(
 					'%.02f, %.02f, %.02f',
@@ -766,6 +771,7 @@
 			</tr></table>
 		</td></tr>
 		<% end %>
+		<tr><td width="33%"><%:Online Users%></td><td id="userinfo">0</td></tr>
 		<tr><td width="33%"><%:Active Connections%></td><td id="conns">-</td></tr>
 	</table>
 </fieldset>
