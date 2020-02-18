@@ -1,11 +1,6 @@
 --[[
 LuCI - Lua Configuration Interface
 Copyright 2019 lisaac <https://github.com/lisaac/luci-app-diskman>
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-  http://www.apache.org/licenses/LICENSE-2.0
-$Id$
 ]]--
 
 require "luci.util"
@@ -29,6 +24,7 @@ function index()
   entry({"admin", "system", "diskman"}, alias("admin", "system", "diskman", "disks"), _("Disk Man"), 55)
   entry({"admin", "system", "diskman", "disks"}, form("diskman/disks"), nil).leaf = true
   entry({"admin", "system", "diskman", "partition"}, form("diskman/partition"), nil).leaf = true
+  entry({"admin", "system", "diskman", "btrfs"}, form("diskman/btrfs"), nil).leaf = true
   entry({"admin", "system", "diskman", "get_disk_info"}, call("get_disk_info"), nil).leaf = true
   entry({"admin", "system", "diskman", "mk_p_table"}, call("mk_p_table"), nil).leaf = true
   entry({"admin", "system", "diskman", "smartdetail"}, call("smart_detail"), nil).leaf = true
@@ -88,31 +84,45 @@ end
 
 function smart_attr(dev)
   local dm = require "luci.model.diskman"
-  local cmd = io.popen(dm.command.smartctl ..  " --attributes -d sat /dev/%s" % dev)
+  local cmd = io.popen(dm.command.smartctl ..  " --attributes /dev/%s" % dev)
   if cmd then
     local attr = { }
-    while true do
-      local ln = cmd:read("*l")
-      if not ln then
-        break
-      elseif ln:match("^.*%d+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+") then
-        local id,attrbute,flag,value,worst,thresh,type,updated,raw = ln:match("^%s*(%d+)%s+([%a%p]+)%s+(%w+)%s+(%d+)%s+(%d+)%s+(%d+)%s+([%a%p]+)%s+(%a+)%s+[%w%p]+%s+(.+)")
-        id= "%x" % id
-        if not id:match("^%w%w") then
-          id = "0%s" % id
+    if dev:match("nvme")then
+      while true do
+        local ln = cmd:read("*l")
+        if not ln then
+          break
+        elseif ln:match("^(.-):%s+(.+)") then
+          local key, value = ln:match("^(.-):%s+(.+)")
+          attr[#attr+1]= {
+              key = key,
+              value = value
+            }
         end
-        attr[#attr+1]= {
-            id = id:upper(),
-            attrbute = attrbute,
-            flag  = flag,
-            value = value,
-            worst = worst,
-            thresh  = thresh,
-            type = type,
-            updated = updated,
-            raw  = raw
-          }
-      else
+      end
+    else
+      while true do
+        local ln = cmd:read("*l")
+        if not ln then
+          break
+        elseif ln:match("^.*%d+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+%s+.+") then
+          local id,attrbute,flag,value,worst,thresh,type,updated,raw = ln:match("^%s*(%d+)%s+([%a%p]+)%s+(%w+)%s+(%d+)%s+(%d+)%s+(%d+)%s+([%a%p]+)%s+(%a+)%s+[%w%p]+%s+(.+)")
+          id= "%x" % id
+          if not id:match("^%w%w") then
+            id = "0%s" % id
+          end
+          attr[#attr+1]= {
+              id = id:upper(),
+              attrbute = attrbute,
+              flag  = flag,
+              value = value,
+              worst = worst,
+              thresh  = thresh,
+              type = type,
+              updated = updated,
+              raw  = raw
+            }
+        end
       end
     end
   cmd:close()
