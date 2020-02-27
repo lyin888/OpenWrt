@@ -111,6 +111,39 @@ msgstr "WIFI温度"
 msgid "Disk Man"
 msgstr "磁盘管理"
 
+msgid "Manage Disks over LuCI."
+msgstr "通过LuCI管理磁盘."
+
+msgid "Disks"
+msgstr "磁盘"
+
+msgid "Serial Number"
+msgstr "序列号"
+
+msgid "Partition Table"
+msgstr "分区表"
+
+msgid "SATA Version"
+msgstr "SATA版本"
+
+msgid "Device Info"
+msgstr "设备信息"
+
+msgid "Partition Management"
+msgstr "分区管理"
+
+msgid "Partitions Info"
+msgstr "分区信息"
+
+msgid "Default 2048 sector alignment, support +size{b,k,m,g,t} in End Sector"
+msgstr "默认2048个扇区对齐，在终端扇区中支持+ size {b，k，m，g，t}"
+
+msgid "Useage"
+msgstr "使用率"
+
+msgid "File System"
+msgstr "文件系统"
+
 msgid ""
 msgstr ""
 
