@@ -124,9 +124,6 @@ msgstr "通过LuCI分区磁盘。"
 msgid "Device Info"
 msgstr "设备信息"
 
-msgid "Disk Man"
-msgstr "磁盘管理"
-
 msgid "Partitions Info"
 msgstr "分区信息"
 
