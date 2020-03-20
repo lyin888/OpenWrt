@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-frpc
-PKG_VERSION:=0.31.2
+PKG_VERSION:=0.32.0
 PKG_RELEASE:=4
 PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)
 
