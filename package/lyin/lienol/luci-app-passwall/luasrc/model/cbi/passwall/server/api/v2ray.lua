@@ -5,20 +5,23 @@ function gen_config(user)
     local settings = nil
     local routing = nil
     local outbounds = {
-        {protocol = "freedom"}, {protocol = "blackhole", tag = "blocked"}
+        {protocol = "freedom", tag = "direct"}, {protocol = "blackhole", tag = "blocked"}
     }
 
-    if user.protocol == "vmess" then
-        if user.vmess_id then
+    if user.protocol == "vmess" or user.protocol == "vless" then
+        if user.uuid then
             local clients = {}
-            for i = 1, #user.vmess_id do
+            for i = 1, #user.uuid do
                 clients[i] = {
-                    id = user.vmess_id[i],
+                    id = user.uuid[i],
                     level = tonumber(user.level),
                     alterId = tonumber(user.alter_id)
                 }
             end
-            settings = {clients = clients}
+            settings = {
+                clients = clients,
+                decryption = user.decryption or "none"
+            }
         end
     elseif user.protocol == "socks" then
         settings = {
@@ -42,7 +45,7 @@ function gen_config(user)
         }
     elseif user.protocol == "shadowsocks" then
         settings = {
-            method = user.v_ss_encrypt_method,
+            method = user.method,
             password = user.password,
             level = tonumber(user.level) or 1,
             network = user.ss_network or "TCP,UDP",
@@ -59,25 +62,26 @@ function gen_config(user)
         }
     end
 
-    if user.accept_lan == nil or user.accept_lan == "0" then
-        routing = {
-            domainStrategy = "IPOnDemand",
-            rules = {
-                {
-                    type = "field",
-                    ip = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
-                    outboundTag = "blocked"
-                }
+    routing = {
+        domainStrategy = "IPOnDemand",
+        rules = {
+            {
+                type = "field",
+                ip = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
+                outboundTag = (user.accept_lan == nil or user.accept_lan == "0") and "blocked" or "direct"
             }
         }
-    end
+    }
 
     if user.transit_node and user.transit_node ~= "nil" then
         local node = ucic:get_all("passwall", user.transit_node)
         if node and node ~= "nil" and node.type and node.type == "V2ray" then
+            if node.transport == "mkcp" or node.transport == "ds" or node.transport == "quic" then
+                node.stream_security = "none"
+            end
             local transit_node = {
                 tag = "transit",
-                protocol = node.protocol or "vmess",
+                protocol = node.protocol,
                 mux = {
                     enabled = (node.mux == "1") and true or false,
                     concurrency = (node.mux_concurrency) and tonumber(node.mux_concurrency) or 8
@@ -89,8 +93,7 @@ function gen_config(user)
                     tlsSettings = (node.stream_security == "tls") and {
                         disableSessionResumption = node.sessionTicket ~= "1" and true or false,
                         serverName = node.tls_serverName,
-                        allowInsecure = (node.tls_allowInsecure == "1") and true or
-                            false
+                        allowInsecure = (node.tls_allowInsecure == "1") and true or false
                     } or nil,
                     tcpSettings = (node.transport == "tcp") and {
                         header = {
@@ -107,25 +110,23 @@ function gen_config(user)
                         mtu = tonumber(node.mkcp_mtu),
                         tti = tonumber(node.mkcp_tti),
                         uplinkCapacity = tonumber(node.mkcp_uplinkCapacity),
-                        downlinkCapacity = tonumber(
-                            node.mkcp_downlinkCapacity),
-                        congestion = (node.mkcp_congestion == "1") and
-                            true or false,
+                        downlinkCapacity = tonumber(node.mkcp_downlinkCapacity),
+                        congestion = (node.mkcp_congestion == "1") and true or false,
                         readBufferSize = tonumber(node.mkcp_readBufferSize),
-                        writeBufferSize = tonumber(
-                            node.mkcp_writeBufferSize),
+                        writeBufferSize = tonumber(node.mkcp_writeBufferSize),
+                        seed = (node.mkcp_seed and node.mkcp_seed ~= "") and node.mkcp_seed or nil,
                         header = {type = node.mkcp_guise}
                     } or nil,
                     wsSettings = (node.transport == "ws") and {
                         path = node.ws_path or "",
-                        headers = (node.ws_host ~= nil) and
-                            {Host = node.ws_host} or nil
+                        headers = (node.ws_host ~= nil) and {Host = node.ws_host} or nil
                     } or nil,
-                    httpSettings = (node.transport == "h2") and
-                        {path = node.h2_path, host = node.h2_host} or
-                        nil,
-                    dsSettings = (node.transport == "ds") and
-                        {path = node.ds_path} or nil,
+                    httpSettings = (node.transport == "h2") and {
+                        path = node.h2_path, host = node.h2_host
+                    } or nil,
+                    dsSettings = (node.transport == "ds") and {
+                        path = node.ds_path
+                    } or nil,
                     quicSettings = (node.transport == "quic") and {
                         security = node.quic_security,
                         key = node.quic_key,
@@ -133,16 +134,17 @@ function gen_config(user)
                     } or nil
                 },
                 settings = {
-                    vnext = (node.protocol == "vmess") and {
+                    vnext = (node.protocol == "vmess" or node.protocol == "vless") and {
                         {
                             address = node.address,
                             port = tonumber(node.port),
                             users = {
                                 {
-                                    id = node.vmess_id,
+                                    id = node.uuid,
                                     alterId = tonumber(node.alter_id),
-                                    level = tonumber(node.level),
-                                    security = node.security
+                                    level = node.level and tonumber(node.level) or 0,
+                                    security = node.security,
+                                    encryption = node.encryption or "none"
                                 }
                             }
                         }
@@ -214,6 +216,7 @@ function gen_config(user)
                         congestion = (user.mkcp_congestion == "1") and true or false,
                         readBufferSize = tonumber(user.mkcp_readBufferSize),
                         writeBufferSize = tonumber(user.mkcp_writeBufferSize),
+                        seed = (user.mkcp_seed and user.mkcp_seed ~= "") and user.mkcp_seed or nil,
                         header = {type = user.mkcp_guise}
                     } or nil,
                     wsSettings = (user.transport == "ws") and {
@@ -238,5 +241,11 @@ function gen_config(user)
         outbounds = outbounds,
         routing = routing
     }
+
+    if user.transport == "mkcp" or user.transport == "ds" or user.transport == "quic" then
+        config.inbounds[1].streamSettings.security = "none"
+        config.inbounds[1].streamSettings.tlsSettings = nil
+    end
+
     return config
 end
