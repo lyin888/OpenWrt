@@ -30,7 +30,7 @@ info = luci.sys.exec("/etc/frpc -v")
 
 e=t:taboption("base",Value, "ver", translate("Software version"), translate("Custom version.<strong><font color=\"green\">current version:</font></strong>") .. info)
 e.rmempty=false
-e:value("0.31.2")
+e:value("0.34.0")
 
 e=t:taboption("base",Value, "bin_path", translate("Operating mode"), translate("Flash mode requires 6M of storage space, if not enough space, please use memory mode"))
 e.rmempty=false
