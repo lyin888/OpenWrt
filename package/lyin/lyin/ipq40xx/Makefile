@@ -17,21 +17,24 @@ include $(INCLUDE_DIR)/package.mk
 define Package/ipq40xx
   TITLE:=P&WR619AC auto core loadbalance script.
   MAINTAINER:=lyin
-  DEPENDS:=@TARGET_ipq40xx
+  DEPENDS:=@TARGET_ipq40xx \
+    +TARGET_ipq40xx:lm-sensors
 endef
 
 define Package/ipq40xx/description
-A usb autoconfig hotplug script.
+  A luci autoconfig hotplug script.
 endef
 
 define Build/Compile
 endef
 
 define Package/ipq40xx/install
-	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/ipq40xx $(1)/etc/init.d/ipq40xx
-	$(INSTALL_DIR) $(1)/etc
-	$(INSTALL_DATA) ./files/index.htm $(1)/etc/index.htm
+        $(INSTALL_DIR) $(1)/etc
+	$(INSTALL_DATA) ./files/arm/index.htm $(1)/etc/index.htm
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/arm/090-cover-index_htm $(1)/etc/uci-defaults/090-cover-index_htm
+	$(INSTALL_DIR) $(1)/sbin
+	$(INSTALL_BIN) ./files/arm/sbin/cpuinfo $(1)/sbin/cpuinfo
 endef
 
 $(eval $(call BuildPackage,ipq40xx))
