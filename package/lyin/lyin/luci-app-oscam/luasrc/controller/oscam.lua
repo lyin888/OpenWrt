@@ -1,5 +1,3 @@
-#-- Copyright (C) 2018 dz <dingzhong110@gmail.com>
-
 module("luci.controller.oscam", package.seeall)
 
 function index()

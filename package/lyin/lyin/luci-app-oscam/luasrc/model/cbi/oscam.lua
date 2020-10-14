@@ -1,21 +1,16 @@
-#-- Copyright (C) 2018 dz <dingzhong110@gmail.com>
+require("nixio.fs")
+require("luci.http")
 
-local sys = require("luci.sys")
-local util = require("luci.util")
-local fs = require("nixio.fs")
-
-local trport = 8888
-local button = ""
+m = Map("oscam", translate("oscam"))
 
 if luci.sys.call("pidof oscam >/dev/null") == 0 then
-	m = Map("oscam", translate("oscam"), "%s - %s" %{translate("oscam"), translate("<strong><font color=\"green\">Running</font></strong>")})
-	button = "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type=\"button\" value=\" " .. translate("Open Web Interface") .. " \" onclick=\"window.open('http://'+window.location.hostname+':" .. trport .. "')\"/>"
+	m = Map("oscam", translate("OSCAM"), "%s  %s" %{translate(""), translate("<strong><font color=\"green\">OSCAM Running</font></strong>")})
 else
-	m = Map("oscam", translate("oscam"), "%s - %s" %{translate("oscam"), translate("<strong><font color=\"red\">Not Running</font></strong>")})
+	m = Map("oscam", translate("OSCAM"), "%s  %s" %{translate(""), translate("<strong><font color=\"red\">OSCAM Not Running</font></strong>")})
 end
 
 -- Basic
-s = m:section(TypedSection, "oscam", translate("Settings"), translate("General Settings") .. button)
+s = m:section(TypedSection, "oscam", translate("Settings"), translate("General Settings"))
 s.anonymous = true
 
 ---- Eanble
