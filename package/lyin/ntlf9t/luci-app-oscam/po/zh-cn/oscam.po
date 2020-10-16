@@ -5,7 +5,7 @@ msgid "oscam"
 msgstr "oscam"
 
 msgid "<strong><font color=\"green\">Running</font></strong>"
-msgstr "<strong><font color=\"green\">运行</font></strong>"
+msgstr "<strong><font color=\"green\">运行中</font></strong>"
 
 msgid "<strong><font color=\"red\">Not Running</font></strong>"
 msgstr "<strong><font color=\"red\">未运行</font></strong>"
@@ -20,7 +20,7 @@ msgid "Enable"
 msgstr "启用"
 
 msgid "Enable or disable oscam server"
-msgstr "启用或禁用oscam服务器"
+msgstr "启用或禁用OSCAM服务器"
 
 msgid "oscam conf"
 msgstr "oscam配置文件"

@@ -1,22 +1,16 @@
-#
-# Copyright (C) 2016-2017 Tomasz Maciej Nowak <tomek_n@o2.pl>
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
 include $(TOPDIR)/rules.mk
 
 PKG_NAME := oscam
-PKG_REV := 88dedcc9ef197580aa536d96b3c1b98de1fe5238
+PKG_REV:=r11643
 PKG_VERSION := 1.2_$(PKG_REV)
-PKG_RELEASE := 1
+PKG_RELEASE := 2
 
 PKG_SOURCE_PROTO:= git
-#PKG_SOURCE_PROTO := svn
-PKG_SOURCE_VERSION := $(PKG_REV)
-PKG_SOURCE_URL := https://github.com/nx111/oscam.git
-#PKG_SOURCE_URL := http://www.streamboard.tv/svn/oscam/trunk
-#PKG_SOURCE_URL := http://www.oscam.cc/svn/oscam-mirror/trunk
+PKG_SOURCE_VERSION:=88dedcc9ef197580aa536d96b3c1b98de1fe5238
+PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+PKG_SOURCE_URL:=https://github.com/nx111/oscam.git
+PKG_SOURCE:=$(PKG_SOURCE_SUBDIR).tar.bz2
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 PKG_LICENSE := GPL-3.0
 PKG_LICENSE_FILE := COPYING
