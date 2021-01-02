@@ -1,4 +1,3 @@
-#
 # Copyright (C) 2010-2011 OpenWrt.org
 #
 # This is free software, licensed under the GNU General Public License v2.
@@ -9,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=autocore
 PKG_VERSION:=1
-PKG_RELEASE:=35
+PKG_RELEASE:=36
 
 include $(INCLUDE_DIR)/package.mk
 
