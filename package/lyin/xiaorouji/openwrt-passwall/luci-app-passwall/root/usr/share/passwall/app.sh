@@ -11,13 +11,10 @@ TMP_BIN_PATH=$TMP_PATH/bin
 TMP_ID_PATH=$TMP_PATH/id
 TMP_PORT_PATH=$TMP_PATH/port
 TMP_ROUTE_PATH=$TMP_PATH/route
-LOCK_FILE=/var/lock/$CONFIG.lock
 LOG_FILE=/var/log/$CONFIG.log
 APP_PATH=/usr/share/$CONFIG
 RULES_PATH=/usr/share/${CONFIG}/rules
-TMP_DNSMASQ_PATH=/var/etc/dnsmasq-passwall.d
-DNSMASQ_PATH=/etc/dnsmasq.d
-LOCAL_DOH_PORT=7912
+DNS_N=dnsmasq
 DNS_PORT=7913
 TUN_DNS="127.0.0.1#${DNS_PORT}"
 IS_DEFAULT_DNS=0
@@ -32,6 +29,7 @@ API_GEN_XRAY=$LUA_API_PATH/gen_xray.lua
 API_GEN_XRAY_PROTO=$LUA_API_PATH/gen_xray_proto.lua
 API_GEN_TROJAN=$LUA_API_PATH/gen_trojan.lua
 API_GEN_NAIVE=$LUA_API_PATH/gen_naiveproxy.lua
+
 echolog() {
 	local d="$(date "+%Y-%m-%d %H:%M:%S")"
 	echo -e "$d: $*" >>$LOG_FILE
@@ -46,38 +44,6 @@ config_t_get() {
 	local index=${4:-0}
 	local ret=$(uci -q get "${CONFIG}.@${1}[${index}].${2}" 2>/dev/null)
 	echo "${ret:=${3}}"
-}
-
-set_lock(){
-	exec 1000>"$LOCK_FILE"
-	flock -x 1000
-}
-
-trap 'rm -f "$LOCK_FILE"; exit $?' INT TERM EXIT
-
-unlock() {
-    failcount=1
-    while [ "$failcount" -le 10 ]; do
-		if [ -f "$LOCK_FILE" ]; then
-			let "failcount++"
-			sleep 1s
-			[ "$failcount" -ge 10 ] && unset_lock
-		else
-			break
-		fi
-	done
-}
-
-unset_lock(){
-	flock -u 1000
-	rm -rf "$LOCK_FILE"
-}
-
-_exit()
-{
-    local rc=$1
-    unset_lock
-    exit ${rc}
 }
 
 get_enabled_anonymous_secs() {
@@ -189,49 +155,6 @@ get_last_dns() {
 	[ "${__first}" ==  "${__last}" ] || echo "${__last}"
 }
 
-gen_dnsmasq_items() {
-	local ipsetlist=${1}; shift 1
-	local fwd_dns=${1}; shift 1
-	local outf=${1}; shift 1
-
-	awk -v ipsetlist="${ipsetlist}" -v ipsetoutf="${TMP_DNSMASQ_PATH}/ipset.conf" -v fwd_dns="${fwd_dns}" -v outf="${outf}" '
-		BEGIN {
-			if(outf == "") {outf="/dev/stdout"; ipsetoutf="/dev/stdout";}
-			split(fwd_dns, dns, ","); setdns=length(dns)>0; setlist=length(ipsetlist)>0;
-			if(setdns) for(i in dns) if(length(dns[i])==0) delete dns[i];
-			fail=1;
-		}
-		! /^$/&&!/^#/ {
-			fail=0
-			if(! (setdns || setlist)) {printf("server=%s\n", $0) >>outf; next;}
-			if(setdns) for(i in dns) printf("server=/.%s/%s\n", $0, dns[i]) >>outf;
-			
-			if(setlist) printf("ipset=/.%s/%s\n", $0, ipsetlist) >>ipsetoutf;
-		}
-		END {fflush(outf); close(outf); fflush(ipsetoutf); close(ipsetoutf); exit(fail);}
-	'
-}
-
-gen_dnsmasq_fake_items() {
-	local fwd_dns=${1}; shift 1
-	local outf=${1}; shift 1
-
-	awk -v fwd_dns="${fwd_dns}" -v outf="${outf}" '
-		BEGIN {
-			if(outf == "") outf="/dev/stdout";
-			split(fwd_dns, dns, ","); setdns=length(dns)>0;
-			if(setdns) for(i in dns) if(length(dns[i])==0) delete dns[i];
-			fail=1;
-		}
-		! /^$/&&!/^#/ {
-			fail=0
-			if(! setdns) {printf("address=%s\n", $0) >>outf; next;}
-			if(setdns) for(i in dns) printf("address=/.%s/%s\n", $0, dns[i]) >>outf;
-		}
-		END {fflush(outf); close(outf); exit(fail);}
-	'
-}
-
 check_port_exists() {
 	port=$1
 	protocol=$2
@@ -294,8 +217,10 @@ TCP_NODE=$(config_t_get global tcp_node nil)
 UDP_REDIR_PORT=1051
 UDP_NODE=$(config_t_get global udp_node nil)
 
-[ "$UDP_NODE" == "tcp_" ] && UDP_NODE=$TCP_NODE
-[ "$UDP_NODE" == "tcp" ] && UDP_REDIR_PORT=$TCP_REDIR_PORT
+[ "$UDP_NODE" == "tcp" ] && {
+	UDP_NODE=$TCP_NODE
+	TCP_UDP=1
+}
 
 TCP_REDIR_PORTS=$(config_t_get global_forwarding tcp_redir_ports '80,443')
 UDP_REDIR_PORTS=$(config_t_get global_forwarding udp_redir_ports '1:65535')
@@ -343,7 +268,7 @@ load_config() {
 	if [ "${LOCAL_DNS}" = "default" ]; then
 		DEFAULT_DNS=$(uci show dhcp | grep "@dnsmasq" | grep "\.server=" | awk -F '=' '{print $2}' | sed "s/'//g" | tr ' ' ',')
 		if [ -z "${DEFAULT_DNS}" ]; then
-			DEFAULT_DNS=$(echo -n $(sed -n 's/^nameserver[ \t]*\([^ ]*\)$/\1/p' "${RESOLVFILE}" | grep -v "0.0.0.0" | grep -v "127.0.0.1" | grep -v "^::$" | head -2) | tr ' ' ',')
+			DEFAULT_DNS=$(echo -n $(sed -n 's/^nameserver[ \t]*\([^ ]*\)$/\1/p' "${RESOLVFILE}" | grep -v -E "0.0.0.0|127.0.0.1|::" | head -2) | tr ' ' ',')
 		fi
 		LOCAL_DNS="${DEFAULT_DNS:-119.29.29.29}"
 		IS_DEFAULT_DNS=1
@@ -422,12 +347,15 @@ run_socks() {
 		}
 		ln_start_bin "$(first_type $(config_t_get global_app brook_file) brook)" "brook_SOCKS_${flag}" $log_file "$protocol" --socks5 "$bind:$socks_port" -s "$server_host:$port" -p "$(config_n_get $node password)"
 	;;
-	ss|ssr)
+	ssr)
 		lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $socks_port -server_host $server_host -server_port $port > $config_file
-		ss_program="$(first_type ${type}local ${type}-local)"
-		[ "$(printf '%s' "$ss_program" | awk -F '/' '{print $NF}')" = "${type}local" ] && \
-			ss_extra_arg="-U" || ss_extra_arg="-u"
-		ln_start_bin "$ss_program" "${type}-local" $log_file -c "$config_file" -v $ss_extra_arg
+		ln_start_bin "$(first_type ssr-local)" "ssr-local" $log_file -c "$config_file" -v
+	;;
+	ss)
+		local bin="ss-local"
+		[ "$(config_n_get $node ss_rust 0)" = "1" ] && bin="sslocal"
+		lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $socks_port -server_host $server_host -server_port $port -protocol socks -mode tcp_and_udp > $config_file
+		ln_start_bin "$(first_type $bin ss-local)" "$bin" $log_file -c "$config_file" -v
 	;;
 	esac
 
@@ -504,12 +432,15 @@ run_redir() {
 				ln_start_bin "$(first_type $(config_t_get global_app brook_file) brook)" "brook_udp" $log_file tproxy -l ":$local_port" -s "$server_host:$port" -p "$(config_n_get $node password)"
 			fi
 		;;
-		ss|ssr)
+		ssr)
 			lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port > $config_file
-			ss_program="$(first_type ${type}local ${type}-redir)"
-			[ "$(printf '%s' "$ss_program" | awk -F '/' '{print $NF}')" = "${type}local" ] && \
-				ss_extra_arg="--protocol redir -u" || ss_extra_arg="-U"
-			ln_start_bin "$ss_program" "${type}-redir" $log_file -c "$config_file" -v $ss_extra_arg
+			ln_start_bin "$(first_type ssr-redir)" "ssr-redir" $log_file -c "$config_file" -v -U
+		;;
+		ss)
+			local bin="ss-redir"
+			[ "$(config_n_get $node ss_rust 0)" = "1" ] && bin="sslocal"
+			lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port -protocol redir -mode udp_only > $config_file
+			ln_start_bin "$(first_type $bin ss-redir)" "$bin" $log_file -c "$config_file" -v
 		;;
 		esac
 	;;
@@ -544,8 +475,7 @@ run_redir() {
 		xray)
 			local loglevel=$(config_t_get global loglevel "warning")
 			local proto="-proto tcp"
-			[ "$UDP_NODE" == "tcp" ] && proto="-proto tcp,udp"
-			local extra_param="${proto}"
+			local extra_param=""
 			[ "$tcp_node_socks" = "1" ] && {
 				local socks_param="-socks_proxy_port $tcp_node_socks_port"
 				extra_param="${extra_param} ${socks_param}"
@@ -556,15 +486,32 @@ run_redir() {
 				extra_param="${extra_param} ${http_param}"
 				config_file=$(echo $config_file | sed "s/TCP/TCP_HTTP_$tcp_node_http_id/g")
 			}
+			[ "$TCP_UDP" = "1" ] && {
+				config_file=$(echo $config_file | sed "s/TCP/TCP_UDP/g")
+				proto="-proto tcp,udp"
+				UDP_REDIR_PORT=$TCP_REDIR_PORT
+				UDP_NODE="nil"
+			}
+			extra_param="${extra_param} ${proto}"
 			lua $API_GEN_XRAY -node $node -redir_port $local_port -loglevel $loglevel $extra_param > $config_file
 			ln_start_bin "$(first_type $(config_t_get global_app xray_file) xray)" xray $log_file -config="$config_file"
 		;;
 		trojan-go)
+			[ "$TCP_UDP" = "1" ] && {
+				config_file=$(echo $config_file | sed "s/TCP/TCP_UDP/g")
+				UDP_REDIR_PORT=$TCP_REDIR_PORT
+				UDP_NODE="nil"
+			}
 			local loglevel=$(config_t_get global trojan_loglevel "2")
 			lua $API_GEN_TROJAN -node $node -run_type nat -local_addr "0.0.0.0" -local_port $local_port -loglevel $loglevel > $config_file
 			ln_start_bin "$(first_type $(config_t_get global_app trojan_go_file) trojan-go)" trojan-go $log_file -config "$config_file"
 		;;
 		trojan*)
+			[ "$TCP_UDP" = "1" ] && {
+				config_file=$(echo $config_file | sed "s/TCP/TCP_UDP/g")
+				UDP_REDIR_PORT=$TCP_REDIR_PORT
+				UDP_NODE="nil"
+			}
 			local loglevel=$(config_t_get global trojan_loglevel "2")
 			lua $API_GEN_TROJAN -node $node -run_type nat -local_addr "0.0.0.0" -local_port $local_port -loglevel $loglevel > $config_file
 			ln_start_bin "$(first_type ${type})" "${type}" $log_file -c "$config_file"
@@ -585,7 +532,6 @@ run_redir() {
 				_socks_address="127.0.0.1"
 				_socks_port=$socks_port
 				echolog "Brook的WebSocket不支持透明代理，将使用ipt2socks转换透明代理！"
-				[ "$UDP_NODE" == "tcp" ] && echolog "Brook的WebSocket不支持UDP转发！"
 			else
 				[ "$kcptun_use" == "1" ] && {
 					server_ip=127.0.0.1
@@ -594,23 +540,41 @@ run_redir() {
 				ln_start_bin "$(first_type $(config_t_get global_app brook_file) brook)" "brook_tcp" $log_file tproxy -l ":$local_port" -s "$server_ip:$port" -p "$(config_n_get $node password)"
 			fi
 		;;
-		ss|ssr)
-			ss_program="$(first_type ${type}local ${type}-redir)"
-			[ "$(printf '%s' "$ss_program" | awk -F '/' '{print $NF}')" = "${type}local" ] && \
-				ss_extra_arg="--protocol redir"
+		ssr)
 			if [ "$kcptun_use" == "1" ]; then
 				lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port -server_host "127.0.0.1" -server_port $KCPTUN_REDIR_PORT > $config_file
-				[ "$UDP_NODE" == "tcp" ] && echolog "Kcptun不支持UDP转发！"
 			else
+				[ "$TCP_UDP" = "1" ] && {
+					config_file=$(echo $config_file | sed "s/TCP/TCP_UDP/g")
+					UDP_REDIR_PORT=$TCP_REDIR_PORT
+					UDP_NODE="nil"
+					extra_param="-u"
+				}
 				lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port > $config_file
-				[ "$UDP_NODE" == "tcp" ] && ss_extra_arg="$ss_extra_arg -u"
 			fi
-			ln_start_bin "$ss_program" "${type}-redir" $log_file -c "$config_file" -v $ss_extra_arg
+			ln_start_bin "$(first_type ssr-redir)" "ssr-redir" $log_file -c "$config_file" -v $extra_param
+		;;
+		ss)
+			local bin="ss-redir"
+			[ "$(config_n_get $node ss_rust 0)" = "1" ] && bin="sslocal"
+			lua_mode_arg="-mode tcp_only"
+			if [ "$kcptun_use" == "1" ]; then
+				lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port -server_host "127.0.0.1" -server_port $KCPTUN_REDIR_PORT -protocol redir $lua_mode_arg > $config_file
+			else
+				[ "$TCP_UDP" = "1" ] && {
+					config_file=$(echo $config_file | sed "s/TCP/TCP_UDP/g")
+					UDP_REDIR_PORT=$TCP_REDIR_PORT
+					UDP_NODE="nil"
+					lua_mode_arg="-mode tcp_and_udp"
+				}
+				lua $API_GEN_SS -node $node -local_addr "0.0.0.0" -local_port $local_port -protocol redir $lua_mode_arg > $config_file
+			fi
+			ln_start_bin "$(first_type $bin ss-redir)" "$bin" $log_file -c "$config_file" -v
 		;;
 		esac
 		if [ -n "$_socks_flag" ]; then
 			local extra_param="-T"
-			[ "$UDP_NODE" == "tcp" ] && extra_param=""
+			[ "$TCP_UDP" = "1" ] && extra_param=""
 			ln_start_bin "$(first_type ipt2socks)" "ipt2socks_tcp" $log_file -l "$local_port" -b 0.0.0.0 -s "$_socks_address" -p "$_socks_port" -R -v $extra_param
 		fi
 		unset _socks_flag _socks_address _socks_port _socks_username _socks_password
@@ -637,34 +601,37 @@ node_switch() {
 	[ -n "$1" -a -n "$2" ] && {
 		local node=$2
 		top -bn1 | grep -E "$TMP_PATH" | grep -i "${1}" | grep -v "grep" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
+		rm -rf $TMP_PATH/${1}*
 		local config_file=$TMP_PATH/${1}.json
 		local log_file=$TMP_PATH/${1}.log
 		eval current_port=\$${1}_REDIR_PORT
 		local port=$(cat $TMP_PORT_PATH/${1})
 
-		local ids=$(uci show $CONFIG | grep "=socks" | awk -F '.' '{print $2}' | awk -F '=' '{print $1}')
-		for id in $ids; do
-			[ "$(config_n_get $id enabled 0)" == "0" ] && continue
-			[ "$(config_n_get $id node nil)" != "tcp" ] && continue
-			local socks_port=$(config_n_get $id port)
-			local http_port=$(config_n_get $id http_port 0)
-			top -bn1 | grep -E "$TMP_PATH" | grep -i "SOCKS" | grep "$id" | grep -v "grep" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
-			tcp_node_socks=1
-			tcp_node_socks_port=$socks_port
-			tcp_node_socks_id=$id
-			[ "$http_port" != "0" ] && {
-				tcp_node_http=1
-				tcp_node_http_port=$http_port
-				tcp_node_http_id=$id
-			}
-			break
-		done
+		[ "$SOCKS_ENABLED" = "1" ] && {
+			local ids=$(uci show $CONFIG | grep "=socks" | awk -F '.' '{print $2}' | awk -F '=' '{print $1}')
+			for id in $ids; do
+				[ "$(config_n_get $id enabled 0)" == "0" ] && continue
+				[ "$(config_n_get $id node nil)" != "tcp" ] && continue
+				local socks_port=$(config_n_get $id port)
+				local http_port=$(config_n_get $id http_port 0)
+				top -bn1 | grep -E "$TMP_PATH" | grep -i "SOCKS" | grep "$id" | grep -v "grep" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
+				tcp_node_socks=1
+				tcp_node_socks_port=$socks_port
+				tcp_node_socks_id=$id
+				[ "$http_port" != "0" ] && {
+					tcp_node_http=1
+					tcp_node_http_port=$http_port
+					tcp_node_http_id=$id
+				}
+				break
+			done
+		}
 
 		run_redir $node "0.0.0.0" $port $config_file $1 $log_file
 		echo $node > $TMP_ID_PATH/${1}
 
 		[ "$1" = "TCP" ] && {
-			[ "$(config_t_get global udp_node nil)" = "tcp_" ] && {
+			[ "$(config_t_get global udp_node nil)" = "tcp" ] && [ "$UDP_REDIR_PORT" != "$TCP_REDIR_PORT" ] && {
 				top -bn1 | grep -E "$TMP_PATH" | grep -i "UDP" | grep -v "grep" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
 				UDP_NODE=$node
 				start_redir UDP
@@ -674,7 +641,7 @@ node_switch() {
 		#local node_net=$(echo $1 | tr 'A-Z' 'a-z')
 		#uci set $CONFIG.@global[0].${node_net}_node=$node
 		#uci commit $CONFIG
-		restart_dnsmasq
+		source $APP_PATH/helper_${DNS_N}.sh logic_restart
 	}
 }
 
@@ -922,7 +889,9 @@ start_dns() {
 				echolog "  | - [$?](chinadns-ng) 域名白名单合并到中国域名表"
 			}
 			chnlist_param=${chnlist_param:+-m "${chnlist_param}" -M}
-			ln_start_bin "$(first_type chinadns-ng)" chinadns-ng "${TMP_PATH}/chinadns-ng.log" -v -b 0.0.0.0 -l "${china_ng_listen_port}" ${china_ng_chn:+-c "${china_ng_chn}"} ${chnlist_param} ${china_ng_gfw:+-t "${china_ng_gfw}"} ${gfwlist_param:+-g "${gfwlist_param}"} -f
+			local log_path="${TMP_PATH}/chinadns-ng.log"
+			log_path="/dev/null"
+			ln_start_bin "$(first_type chinadns-ng)" chinadns-ng "$log_path" -v -b 0.0.0.0 -l "${china_ng_listen_port}" ${china_ng_chn:+-c "${china_ng_chn}"} ${chnlist_param} ${china_ng_gfw:+-t "${china_ng_gfw}"} ${gfwlist_param:+-g "${gfwlist_param}"} -f
 			echolog "  + 过滤服务：ChinaDNS-NG(:${china_ng_listen_port}) + ${msg}：国内DNS：${china_ng_chn:-D114.114.114.114}，可信DNS：${china_ng_gfw:-D8.8.8.8}"
 			#[ -n "${global}${chnlist}" ] && [ -z "${returnhome}" ] && TUN_DNS="${china_ng_gfw}"
 		}
@@ -930,174 +899,6 @@ start_dns() {
 
 	[ "${use_udp_node_resolve_dns}" = "1" ] && echolog "  * 要求代理 DNS 请求，如上游 DNS 非直连地址，确保 UDP 代理打开，并且已经正确转发！"
 	[ "${use_tcp_node_resolve_dns}" = "1" ] && echolog "  * 请确认上游 DNS 支持 TCP 查询，如非直连地址，确保 TCP 代理打开，并且已经正确转发！"
-}
-
-add_dnsmasq() {
-	local fwd_dns items item servers msg
-
-	mkdir -p "${TMP_DNSMASQ_PATH}" "${DNSMASQ_PATH}" "/var/dnsmasq.d"
-	[ "$(config_t_get global_rules adblock 0)" = "1" ] && {
-		ln -s "${RULES_PATH}/adblock.conf" "${TMP_DNSMASQ_PATH}/adblock.conf"
-		echolog "  - [$?]广告域名表中域名解析请求直接应答为 '0.0.0.0'"
-	}
-
-	if [ "${DNS_MODE}" = "nonuse" ]; then
-		echolog "  - 不对域名进行分流解析"
-	else
-		#屏蔽列表
-		sort -u "${RULES_PATH}/block_host" | gen_dnsmasq_fake_items "0.0.0.0" "${TMP_DNSMASQ_PATH}/00-block_host.conf"
-
-		#始终用国内DNS解析节点域名
-		fwd_dns="${LOCAL_DNS}"
-		servers=$(uci show "${CONFIG}" | grep ".address=" | cut -d "'" -f 2)
-		hosts_foreach "servers" host_from_url | grep -v "google.c" | grep '[a-zA-Z]$' | sort -u | gen_dnsmasq_items "vpsiplist,vpsiplist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/10-vpsiplist_host.conf"
-		echolog "  - [$?]节点列表中的域名(vpsiplist)：${fwd_dns:-默认}"
-
-		#始终用国内DNS解析直连（白名单）列表
-		[ -f "${RULES_PATH}/direct_host" ] && {
-			fwd_dns="${LOCAL_DNS}"
-			[ -n "$CHINADNS_NG" ] && unset fwd_dns
-			sort -u "${RULES_PATH}/direct_host" | gen_dnsmasq_items "whitelist,whitelist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/11-direct_host.conf"
-			echolog "  - [$?]域名白名单(whitelist)：${fwd_dns:-默认}"
-		}
-		
-		if [ "$(config_t_get global_subscribe subscribe_proxy 0)" = "0" ]; then
-			#如果没有开启通过代理订阅
-			fwd_dns="${LOCAL_DNS}"
-			for item in $(get_enabled_anonymous_secs "@subscribe_list"); do
-				host_from_url "$(config_n_get ${item} url)" | gen_dnsmasq_items "whitelist,whitelist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/12-subscribe.conf"
-			done
-			echolog "  - [$?]节点订阅域名(whitelist)：${fwd_dns:-默认}"
-		else
-			#如果开启了通过代理订阅
-			fwd_dns="${TUN_DNS}"
-			[ -n "$CHINADNS_NG" ] && fwd_dns="${china_ng_gfw}"
-			for item in $(get_enabled_anonymous_secs "@subscribe_list"); do
-				if [ "${DNS_MODE}" = "fake_ip" ]; then
-					host_from_url "$(config_n_get ${item} url)" | gen_dnsmasq_fake_items "11.1.1.1" "${TMP_DNSMASQ_PATH}/91-subscribe.conf"
-				else
-					host_from_url "$(config_n_get ${item} url)" | gen_dnsmasq_items "blacklist,blacklist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/91-subscribe.conf"
-				fi
-			done
-			[ "${DNS_MODE}" != "fake_ip" ] && echolog "  - [$?]节点订阅域名(blacklist)：${fwd_dns:-默认}"
-		fi
-		
-		#始终使用远程DNS解析代理（黑名单）列表
-		[ -f "${RULES_PATH}/proxy_host" ] && {
-			if [ "${DNS_MODE}" = "fake_ip" ]; then
-				sort -u "${RULES_PATH}/proxy_host" | gen_dnsmasq_fake_items "11.1.1.1" "${TMP_DNSMASQ_PATH}/97-proxy_host.conf"
-			else
-				fwd_dns="${TUN_DNS}"
-				[ -n "$CHINADNS_NG" ] && fwd_dns="${china_ng_gfw}"
-				[ -n "$CHINADNS_NG" ] && unset fwd_dns
-				sort -u "${RULES_PATH}/proxy_host" | gen_dnsmasq_items "blacklist,blacklist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/97-proxy_host.conf"
-				echolog "  - [$?]代理域名表(blacklist)：${fwd_dns:-默认}"
-			fi
-		}
-
-		#分流规则
-		[ "$(config_n_get $TCP_NODE protocol)" = "_shunt" ] && {
-			fwd_dns="${TUN_DNS}"
-			local default_node_id=$(config_n_get $TCP_NODE default_node _direct)
-			local shunt_ids=$(uci show $CONFIG | grep "=shunt_rules" | awk -F '.' '{print $2}' | awk -F '=' '{print $1}')
-			for shunt_id in $shunt_ids; do
-				local shunt_node_id=$(config_n_get $TCP_NODE ${shunt_id} nil)
-				if [ "$shunt_node_id" = "nil" ] || [ "$shunt_node_id" = "_default" ] || [ "$shunt_node_id" = "_direct" ] || [ "$shunt_node_id" = "_blackhole" ]; then
-					continue
-				fi
-				local shunt_node=$(config_n_get $shunt_node_id address nil)
-				[ "$shunt_node" = "nil" ] && continue
-				if [ "${DNS_MODE}" = "fake_ip" ]; then
-					config_n_get $shunt_id domain_list | grep -v 'regexp:\|geosite:\|ext:' | sed 's/domain:\|full:\|//g' | tr -s "\r\n" "\n" | sort -u | gen_dnsmasq_fake_items "11.1.1.1" "${TMP_DNSMASQ_PATH}/98-shunt_host.conf"
-				else
-					config_n_get $shunt_id domain_list | grep -v 'regexp:\|geosite:\|ext:' | sed 's/domain:\|full:\|//g' | tr -s "\r\n" "\n" | sort -u | gen_dnsmasq_items "shuntlist,shuntlist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/98-shunt_host.conf"
-				fi
-			done
-			[ "${DNS_MODE}" != "fake_ip" ] && echolog "  - [$?]Xray分流规则(shuntlist)：${fwd_dns:-默认}"
-		}
-
-		#如果没有使用回国模式
-		if [ -z "${returnhome}" ]; then
-			[ -f "${RULES_PATH}/gfwlist" ] && {
-				if [ -n "$count_hosts_str" ]; then
-					grep -v -E "$count_hosts_str" "${RULES_PATH}/gfwlist" > "${TMP_PATH}/gfwlist"
-				else
-					cp -a "${RULES_PATH}/gfwlist" "${TMP_PATH}/gfwlist"
-				fi
-			}
-			if [ "${DNS_MODE}" = "fake_ip" ]; then
-				sort -u "${TMP_PATH}/gfwlist" | gen_dnsmasq_fake_items "11.1.1.1" "${TMP_DNSMASQ_PATH}/99-gfwlist.conf"
-			else
-				fwd_dns="${TUN_DNS}"
-				[ -n "$CHINADNS_NG" ] && fwd_dns="${china_ng_gfw}"
-				[ -n "$CHINADNS_NG" ] && unset fwd_dns
-				sort -u "${TMP_PATH}/gfwlist" | gen_dnsmasq_items "gfwlist,gfwlist6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/99-gfwlist.conf"
-				echolog "  - [$?]防火墙域名表(gfwlist)：${fwd_dns:-默认}"
-				rm -f "${TMP_PATH}/gfwlist"
-			fi
-			# Not China List 模式
-			[ -n "${chnlist}" ] && {
-				fwd_dns="${LOCAL_DNS}"
-				[ -n "$CHINADNS_NG" ] && unset fwd_dns
-				[ -f "${RULES_PATH}/chnlist" ] && {
-					if [ -n "$count_hosts_str" ]; then
-						grep -v -E "$count_hosts_str" "${RULES_PATH}/chnlist" | gen_dnsmasq_items "chnroute,chnroute6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/19-chinalist_host.conf"
-					else
-						sort -u "${RULES_PATH}/chnlist" | gen_dnsmasq_items "chnroute,chnroute6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/19-chinalist_host.conf"
-					fi
-					echolog "  - [$?]中国域名表(chnroute)：${fwd_dns:-默认}"
-				}
-			}
-		else
-			#回国模式
-			[ -f "${RULES_PATH}/chnlist" ] && {
-				if [ -n "$count_hosts_str" ]; then
-					grep -v -E "$count_hosts_str" "${RULES_PATH}/chnlist" > "${TMP_PATH}/chnlist"
-				else
-					cp -a "${RULES_PATH}/chnlist" "${TMP_PATH}/chnlist"
-				fi
-			}
-			if [ "${DNS_MODE}" = "fake_ip" ]; then
-				[ -f "${TMP_PATH}/chnlist" ] && sort -u "${TMP_PATH}/chnlist" | gen_dnsmasq_fake_items "11.1.1.1" "${TMP_DNSMASQ_PATH}/99-chinalist_host.conf"
-			else
-				fwd_dns="${TUN_DNS}"
-				[ -f "${TMP_PATH}/chnlist" ] && sort -u "${TMP_PATH}/chnlist" | gen_dnsmasq_items "chnroute,chnroute6" "${fwd_dns}" "${TMP_DNSMASQ_PATH}/99-chinalist_host.conf"
-				echolog "  - [$?]中国域名表(chnroute)：${fwd_dns:-默认}"
-			fi
-			rm -f "${TMP_PATH}/chnlist"
-		fi
-		
-		#awk '{gsub(/ipset=\//,""); gsub(/\//," ");key=$1;value=$2;if (sum[key] != "") {sum[key]=sum[key]","value} else {sum[key]=sum[key]value}} END{for(i in sum) print "ipset=/"i"/"sum[i]}' "${TMP_DNSMASQ_PATH}/ipset.conf" > "${TMP_DNSMASQ_PATH}/ipset.conf2"
-		#mv -f "${TMP_DNSMASQ_PATH}/ipset.conf2" "${TMP_DNSMASQ_PATH}/ipset.conf"
-	fi
-	if [ "${DNS_MODE}" != "nouse" ]; then
-		echo "conf-dir=${TMP_DNSMASQ_PATH}" > "/var/dnsmasq.d/dnsmasq-${CONFIG}.conf"
-
-		if [ -z "${CHINADNS_NG}" ] && [ "${IS_DEFAULT_DNS}" = "1" ]; then
-			#echolog "  - 不强制设置默认DNS"
-			return
-		else
-			echo "${DEFAULT_DNS}" > $TMP_PATH/default_DNS
-			msg="ISP"
-			servers="${LOCAL_DNS}"
-			[ -n "${chnlist}" ] && msg="中国列表以外"
-			[ -n "${returnhome}" ] && msg="中国列表"
-			[ -n "${global}" ] && msg="全局"
-
-			#默认交给Chinadns-ng处理
-			[ -n "$CHINADNS_NG" ] && {
-				servers="${china_ng_listen}" && msg="chinadns-ng"
-			}
-
-			cat <<-EOF >> "/var/dnsmasq.d/dnsmasq-${CONFIG}.conf"
-				$(echo "${servers}" | sed 's/,/\n/g' | gen_dnsmasq_items)
-				all-servers
-				no-poll
-				no-resolv
-			EOF
-			echolog "  - [$?]以上所列以外及默认(${msg})：${servers}"
-		fi
-	fi
 }
 
 gen_pdnsd_config() {
@@ -1160,12 +961,6 @@ gen_pdnsd_config() {
 		echolog "  | - [$?]上游DNS：${2}:${3}"
 	}
 	hosts_foreach up_dns append_pdnsd_updns 53
-}
-
-del_dnsmasq() {
-	rm -rf /var/dnsmasq.d/dnsmasq-$CONFIG.conf
-	rm -rf $DNSMASQ_PATH/dnsmasq-$CONFIG.conf
-	rm -rf $TMP_DNSMASQ_PATH
 }
 
 add_ip2route() {
@@ -1317,36 +1112,6 @@ force_stop() {
 	exit 0
 }
 
-backup_dnsmasq_servers() {
-	DNSMASQ_DNS=$(uci show dhcp | grep "@dnsmasq" | grep ".server=" | awk -F '=' '{print $2}' | sed "s/'//g" | tr ' ' ',')
-	if [ -n "${DNSMASQ_DNS}" ]; then
-		uci -q set $CONFIG.@global[0].dnsmasq_servers="${DNSMASQ_DNS}"
-		uci commit $CONFIG
-	fi
-}
-
-restore_dnsmasq_servers() {
-	OLD_SERVER=$(uci -q get $CONFIG.@global[0].dnsmasq_servers | tr "," " ")
-	for server in $OLD_SERVER; do
-		uci -q del_list dhcp.@dnsmasq[0].server=$server
-		uci add_list dhcp.@dnsmasq[0].server=$server
-	done
-	uci commit dhcp
-	uci -q delete $CONFIG.@global[0].dnsmasq_servers
-	uci commit $CONFIG
-}
-
-restart_dnsmasq() {
-	if [ -f "$TMP_PATH/default_DNS" ]; then
-		backup_dnsmasq_servers
-		sed -i "/list server/d" /etc/config/dhcp >/dev/null 2>&1
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		restore_dnsmasq_servers
-	else
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-	fi
-}
-
 boot() {
 	[ "$ENABLED" == 1 ] && {
 		local delay=$(config_t_get global_delay start_delay 1)
@@ -1361,8 +1126,6 @@ boot() {
 }
 
 start() {
-	#加锁防止并发开启服务
-	set_lock
 	load_config
 	start_haproxy
 	[ "$SOCKS_ENABLED" = "1" ] && {
@@ -1372,33 +1135,27 @@ start() {
 		start_redir TCP
 		start_redir UDP
 		start_dns
-		add_dnsmasq
+		source $APP_PATH/helper_${DNS_N}.sh add
 		source $APP_PATH/iptables.sh start
-		restart_dnsmasq
-		echolog "重启 dnsmasq 服务[$?]"
+		source $APP_PATH/helper_${DNS_N}.sh logic_restart
 	}
 	start_crontab
 	echolog "运行完成！\n"
-	unset_lock
 }
 
 stop() {
-	unlock
-	set_lock
 	clean_log
 	source $APP_PATH/iptables.sh stop
 	delete_ip2route
 	kill_all v2ray-plugin obfs-local
 	top -bn1 | grep -v "grep" | grep "sleep" | grep -E "9s|58s" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
 	top -bn1 | grep -v "grep" | grep -v "app.sh" | grep "${CONFIG}/" | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
-	rm -rf $TMP_DNSMASQ_PATH $TMP_PATH
+	rm -rf $TMP_PATH
 	unset XRAY_LOCATION_ASSET
 	stop_crontab
-	del_dnsmasq
-	/etc/init.d/dnsmasq restart >/dev/null 2>&1
-	echolog "重启 dnsmasq 服务[$?]"
+	source $APP_PATH/helper_${DNS_N}.sh del
+	source $APP_PATH/helper_${DNS_N}.sh restart
 	echolog "清空并关闭相关程序和缓存完成。"
-	unset_lock
 }
 
 arg1=$1
